@@ -32,6 +32,11 @@ A live n8n workflow that accepts warehouse KPI data via webhook, uses GPT-4o-min
 - LangChain (via n8n AI Agent node)
 - Gmail API
 
+## Workflow — n8n canvas
+
+<img width="1990" height="1170" alt="image" src="https://github.com/user-attachments/assets/6514e29d-16da-4c1a-a82d-7900b0071a84" />
+
+
 ## Output — alert email
 
 ![Warehouse KPI Alert Email]
