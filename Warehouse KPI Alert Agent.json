@@ -1,0 +1,315 @@
+{
+  "name": "Warehouse KPI Alert Agent",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "kpi-alert",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "12dd9e14-2ec1-49b8-89f1-9d51a7f1c6e4",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -1088,
+        80
+      ],
+      "webhookId": "7f3430e3-115a-4289-97ff-8c8c73c2d69b"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ JSON.stringify($json.body) }}",
+        "options": {
+          "systemMessage": "You are a warehouse operations monitoring agent. You receive a JSON object of warehouse KPIs extracted from SAP EWM. Each KPI has a name, a value, and a threshold.\n\nFor each KPI, compare value against threshold and classify severity:\n- value within threshold  -> \"OK\"\n- value slightly over (within 15%) -> \"WARNING\"\n- value well over threshold (>15%) -> \"CRITICAL\"\n\nReturn ONLY a valid JSON object, no prose, no markdown fences, in exactly this shape:\n{\n  \"overall_severity\": \"OK | WARNING | CRITICAL\",\n  \"summary\": \"one short sentence\",\n  \"kpis\": [\n    {\n      \"name\": \"...\",\n      \"value\": 0,\n      \"threshold\": 0,\n      \"severity\": \"OK | WARNING | CRITICAL\",\n      \"recommended_action\": \"short action\"\n    }\n  ]\n}\noverall_severity must equal the worst severity across all KPIs."
+        }
+      },
+      "id": "b927fa57-5882-4eee-ab42-feff20eb0844",
+      "name": "AI Agent",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1.7,
+      "position": [
+        -880,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "mode": "list",
+          "value": "gpt-4o-mini"
+        },
+        "options": {}
+      },
+      "id": "112f7361-4f29-496f-9b6c-65af07d12333",
+      "name": "OpenAI Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.2,
+      "position": [
+        -928,
+        304
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": "Qu8XonfufX0oURql",
+          "name": "OpenAI account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse the agent's JSON output safely\nlet raw = $json.output ?? $json.text ?? \"\";\nraw = String(raw).replace(/```json|```/g, \"\").trim();\n\nlet data;\ntry {\n  data = JSON.parse(raw);\n} catch (e) {\n  throw new Error(\"Agent did not return valid JSON: \" + raw.slice(0, 200));\n}\nreturn [{ json: data }];"
+      },
+      "id": "fb72ac2f-d8d5-46eb-a441-9d5d6e517ca9",
+      "name": "Parse Output",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -560,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "035c7c9a-6efe-4ffc-9980-8d75305653c4",
+              "leftValue": "={{ $json.overall_severity }}",
+              "rightValue": "CRITICAL",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "9ed83e64-b0ab-4aa0-887c-4a6445bace76",
+      "name": "Any KPI critical?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -336,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "93184885-c343-4ded-8e21-475c0149c8b2",
+              "name": "escalated",
+              "value": true,
+              "type": "boolean"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "id": "b532acfe-1c6d-48df-a9a3-8e0e858e23e6",
+      "name": "Escalate (human review)",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -112,
+        -48
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Build a color-coded HTML alert email\nconst data = $json;\nconst color = { OK: \"#16a34a\", WARNING: \"#d97706\", CRITICAL: \"#dc2626\" };\nconst bg    = { OK: \"#f0fdf4\", WARNING: \"#fffbeb\", CRITICAL: \"#fef2f2\" };\n\nconst rows = data.kpis.map(k => `\n  <tr style=\"background:${bg[k.severity]};\">\n    <td style=\"padding:8px 12px;border:1px solid #e5e7eb;\">${k.name}</td>\n    <td style=\"padding:8px 12px;border:1px solid #e5e7eb;text-align:right;\">${k.value}</td>\n    <td style=\"padding:8px 12px;border:1px solid #e5e7eb;text-align:right;\">${k.threshold}</td>\n    <td style=\"padding:8px 12px;border:1px solid #e5e7eb;color:${color[k.severity]};font-weight:600;\">${k.severity}</td>\n    <td style=\"padding:8px 12px;border:1px solid #e5e7eb;\">${k.recommended_action}</td>\n  </tr>`).join(\"\");\n\nconst flag = data.escalated ? `<p style=\"color:#dc2626;font-weight:600;\">ESCALATED for human review</p>` : \"\";\n\nconst html = `\n<div style=\"font-family:Arial,sans-serif;max-width:720px;\">\n  <h2 style=\"color:${color[data.overall_severity]};margin-bottom:4px;\">Warehouse KPI Alert &mdash; ${data.overall_severity}</h2>\n  ${flag}\n  <p style=\"color:#374151;\">${data.summary}</p>\n  <table style=\"border-collapse:collapse;width:100%;font-size:14px;\">\n    <thead>\n      <tr style=\"background:#111827;color:#ffffff;\">\n        <th style=\"padding:8px 12px;text-align:left;\">KPI</th>\n        <th style=\"padding:8px 12px;text-align:right;\">Value</th>\n        <th style=\"padding:8px 12px;text-align:right;\">Threshold</th>\n        <th style=\"padding:8px 12px;text-align:left;\">Status</th>\n        <th style=\"padding:8px 12px;text-align:left;\">Recommended action</th>\n      </tr>\n    </thead>\n    <tbody>${rows}</tbody>\n  </table>\n</div>`;\n\nreturn [{ json: { html, subject: `Warehouse KPI Alert - ${data.overall_severity}`, overall_severity: data.overall_severity, escalated: !!data.escalated } }];"
+      },
+      "id": "317401b7-5952-4d93-8461-2c54bd986c3c",
+      "name": "Build HTML alert",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        112,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "sendTo": "pritambtech@gmail.com",
+        "subject": "={{ $json.subject }}",
+        "message": "={{ $json.html }}",
+        "options": {}
+      },
+      "id": "bb1d4be0-387d-4693-b265-cc15f793be77",
+      "name": "Send email (Gmail)",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        336,
+        80
+      ],
+      "webhookId": "38b79aad-e376-462e-a1f5-905b57e6d478",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "TfMkMA5ir5HLNXUW",
+          "name": "Gmail OAuth2 API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "81d5caed-f442-4e85-a7f9-2de6f94df2f5",
+              "name": "logged_at",
+              "value": "={{ $now }}",
+              "type": "string"
+            },
+            {
+              "id": "6336a6db-5dc3-4652-a7e7-32aa7fcc3d7d",
+              "name": "severity",
+              "value": "={{ $json.overall_severity }}",
+              "type": "string"
+            },
+            {
+              "id": "65380200-f4f1-4bde-95eb-c6589f7b01bb",
+              "name": "subject",
+              "value": "={{ $json.subject }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "8dbc9a1c-ee87-4a0f-ad2b-e30a00feed44",
+      "name": "Log run",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        560,
+        80
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Agent": {
+      "main": [
+        [
+          {
+            "node": "Parse Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Output": {
+      "main": [
+        [
+          {
+            "node": "Any KPI critical?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Any KPI critical?": {
+      "main": [
+        [
+          {
+            "node": "Escalate (human review)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build HTML alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Escalate (human review)": {
+      "main": [
+        [
+          {
+            "node": "Build HTML alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build HTML alert": {
+      "main": [
+        [
+          {
+            "node": "Send email (Gmail)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send email (Gmail)": {
+      "main": [
+        [
+          {
+            "node": "Log run",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "e66dc35c-f67a-42f9-ae66-bc0034a053b7",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "220c38e44acb38fae1ef1e3429a56a001e5c8cdfc6303793d4768ace13049592"
+  },
+  "nodeGroups": [],
+  "id": "NiF0OFh096iRkXoI",
+  "tags": []
+}
